@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+"""Compute current TOTP from a base32 secret or otpauth:// URI on stdin."""
+import base64, hashlib, hmac, struct, sys, time, urllib.parse
+
+s = sys.stdin.read().strip()
+if not s: sys.exit(1)
+
+algo, digits, period = hashlib.sha1, 6, 30
+if s.startswith("otpauth://"):
+    p = urllib.parse.parse_qs(urllib.parse.urlparse(s).query)
+    s = p.get("secret", [""])[0]
+    algo   = {"SHA1": hashlib.sha1, "SHA256": hashlib.sha256, "SHA512": hashlib.sha512}.get(p.get("algorithm", ["SHA1"])[0].upper(), hashlib.sha1)
+    digits = int(p.get("digits", [6])[0])
+    period = int(p.get("period",  [30])[0])
+if not s: sys.exit(1)
+try:
+    key = base64.b32decode(s.upper() + "=" * (-len(s) % 8))
+    t = time.time()
+    counter = int(t) // period
+    # shortcut: advances to next window in last 5s; assumes site accepts ±1 window tolerance
+    if t % period > period - 5:
+        counter += 1
+    msg = struct.pack(">Q", counter)
+    h = hmac.new(key, msg, algo).digest()
+    offset = h[-1] & 0xF
+    code = (struct.unpack(">I", h[offset : offset + 4])[0] & 0x7FFFFFFF) % (10 ** digits)
+    sys.stdout.write(f"{code:0{digits}d}")
+except Exception as e:
+    sys.stderr.write(f"bw-totp: {e}\n")
+    sys.exit(1)
